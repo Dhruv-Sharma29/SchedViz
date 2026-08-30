@@ -24,6 +24,10 @@ const COLORS = [
   "#8bbd54",
   "#a28ad9",
 ];
+const processColor = (id) => {
+  const number = Number(String(id).replace(/\D/g, ""));
+  return COLORS[(Number.isFinite(number) ? number : 0) % COLORS.length];
+};
 const PRESET = [
   { id: "P1", arrival: 0, burst: 8, ioBurst: 0, priority: 2 },
   { id: "P2", arrival: 1, burst: 4, ioBurst: 0, priority: 1 },
@@ -584,10 +588,7 @@ function Gantt({ events, total, allEvents, zoom, onZoomChange }) {
                 background:
                   e.processId === "IDLE"
                     ? "#e9e8ee"
-                    : COLORS[
-                        (Number(e.processId.replace(/\D/g, "")) || 1) -
-                          (1 % COLORS.length)
-                      ],
+                    : processColor(e.processId),
               }}
               title={`${e.processId}: ${e.start} → ${e.end}`}
             >
@@ -618,10 +619,7 @@ function Gantt({ events, total, allEvents, zoom, onZoomChange }) {
           <span key={id}>
             <i
               style={{
-                background:
-                  COLORS[
-                    (Number(id.replace(/\D/g, "")) || 1) - (1 % COLORS.length)
-                  ],
+                background: processColor(id),
               }}
             />
             {id}
@@ -679,13 +677,7 @@ function Metrics({ processes, sim }) {
                   <td>
                     <span
                       className="pid-dot"
-                      style={{
-                        background:
-                          COLORS[
-                            (Number(p.id.replace(/\D/g, "")) || 1) -
-                              (1 % COLORS.length)
-                          ],
-                      }}
+                      style={{ background: processColor(p.id) }}
                     />
                     {p.id}
                   </td>
