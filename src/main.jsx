@@ -595,7 +595,7 @@ function Gantt({ events, total, allEvents, zoom, onZoomChange }) {
               {((e.end - e.start) / total) * 100 >= 3.5 && (
                 <>
                   <b>{e.processId}</b>
-                  <small>{e.end - e.start}u</small>
+                  <small>{e.start} → {e.end}</small>
                 </>
               )}
             </div>
