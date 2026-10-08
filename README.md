@@ -75,3 +75,9 @@ npm run preview
 ## License
 
 MIT © Dhruv Sharma
+
+## Scheduling model and tests
+
+Each process has one CPU burst and an arrival time. Priority and I/O columns have been removed because this model does not schedule I/O or user-defined priorities. MLFQ assigns new jobs to the highest queue, uses exponentially increasing round-robin allotments, and runs the bottom queue as FCFS. Higher-priority arrivals preempt lower queues immediately; interrupted jobs retain their remaining allotment and queue position. There is no periodic priority boost.
+
+Run `npm test` for scheduling regression tests and `npm run build` for the production build.
