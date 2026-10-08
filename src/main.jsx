@@ -13,6 +13,7 @@ import {
   GitCompareArrows,
 } from "lucide-react";
 import "./styles.css";
+import { simulate } from "./scheduler.js";
 
 const COLORS = [
   "#7c6df2",
@@ -29,18 +30,16 @@ const processColor = (id) => {
   return COLORS[(Number.isFinite(number) ? number : 0) % COLORS.length];
 };
 const PRESET = [
-  { id: "P1", arrival: 0, burst: 8, ioBurst: 0, priority: 2 },
-  { id: "P2", arrival: 1, burst: 4, ioBurst: 0, priority: 1 },
-  { id: "P3", arrival: 2, burst: 2, ioBurst: 0, priority: 3 },
-  { id: "P4", arrival: 3, burst: 5, ioBurst: 0, priority: 2 },
-  { id: "P5", arrival: 5, burst: 3, ioBurst: 0, priority: 1 },
+  { id: "P1", arrival: 0, burst: 8 },
+  { id: "P2", arrival: 1, burst: 4 },
+  { id: "P3", arrival: 2, burst: 2 },
+  { id: "P4", arrival: 3, burst: 5 },
+  { id: "P5", arrival: 5, burst: 3 },
 ];
 const MLFQ_TEXTBOOK_PRESET = Array.from({ length: 10 }, (_, i) => ({
   id: `P${i}`,
   arrival: 0,
   burst: 1000,
-  ioBurst: 0,
-  priority: 1,
 }));
 const ALGORITHMS = [
   ["fcfs", "FCFS", "First Come First Serve"],
@@ -52,172 +51,6 @@ const ALGORITHMS = [
   ["mlfq", "MLFQ", "Multi-Level Feedback Queue"],
 ];
 
-function merge(events) {
-  return events.reduce((a, e) => {
-    const last = a[a.length - 1];
-    if (
-      last &&
-      last.processId === e.processId &&
-      last.end === e.start &&
-      last.queueLevel === e.queueLevel
-    )
-      last.end = e.end;
-    else a.push({ ...e });
-    return a;
-  }, []);
-}
-function result(processes, events) {
-  const timeline = merge(events),
-    completion = {};
-  processes.forEach((p) => (completion[p.id] = 0));
-  timeline.forEach((e) => {
-    if (e.processId !== "IDLE")
-      completion[e.processId] = Math.max(completion[e.processId], e.end);
-  });
-  const turnaround = {},
-    waiting = {},
-    response = {};
-  processes.forEach((p) => {
-    turnaround[p.id] = completion[p.id] - p.arrival;
-    waiting[p.id] = turnaround[p.id] - p.burst;
-    const first = timeline.find((e) => e.processId === p.id);
-    response[p.id] = (first?.start ?? p.arrival) - p.arrival;
-  });
-  const totalTime = timeline.at(-1)?.end || 0,
-    busyTime = timeline
-      .filter((e) => e.processId !== "IDLE")
-      .reduce((sum, e) => sum + e.end - e.start, 0);
-  return {
-    timeline,
-    completion,
-    turnaround,
-    waiting,
-    response,
-    avgWaiting: avg(Object.values(waiting)),
-    avgTurnaround: avg(Object.values(turnaround)),
-    cpuUtilization: totalTime ? (busyTime / totalTime) * 100 : 0,
-  };
-}
-const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
-function simulate(processes, algo, quantum = 3, levels = 3) {
-  const ps = processes
-    .map((p) => ({ ...p }))
-    .filter((p) => p.burst > 0)
-    .sort((a, b) => a.arrival - b.arrival || a.id.localeCompare(b.id));
-  const ev = [];
-  if (!ps.length) return result(processes, ev);
-  if (algo === "fcfs" || algo === "sjf" || algo === "hrrn") {
-    let t = 0,
-      done = new Set();
-    while (done.size < ps.length) {
-      const ready = ps.filter((p) => !done.has(p.id) && p.arrival <= t);
-      if (!ready.length) {
-        const n = ps.find((p) => !done.has(p.id));
-        ev.push({ processId: "IDLE", start: t, end: n.arrival });
-        t = n.arrival;
-        continue;
-      }
-      let p = ready[0];
-      if (algo === "sjf")
-        p = ready.sort((a, b) => a.burst - b.burst || a.arrival - b.arrival)[0];
-      if (algo === "hrrn")
-        p = ready
-          .sort(
-            (a, b) =>
-              (t - a.arrival + a.burst) / a.burst -
-              (t - b.arrival + b.burst) / b.burst,
-          )
-          .at(-1);
-      ev.push({ processId: p.id, start: t, end: t + p.burst });
-      t += p.burst;
-      done.add(p.id);
-    }
-    return result(processes, ev);
-  }
-  let t = 0,
-    remaining = Object.fromEntries(ps.map((p) => [p.id, p.burst])),
-    done = new Set(),
-    queue = [],
-    next = 0;
-  const add = () => {
-    while (next < ps.length && ps[next].arrival <= t) {
-      queue.push(ps[next].id);
-      next++;
-    }
-  };
-  if (algo === "rr") {
-    while (done.size < ps.length) {
-      add();
-      if (!queue.length) {
-        const n = ps[next];
-        ev.push({ processId: "IDLE", start: t, end: n.arrival });
-        t = n.arrival;
-        add();
-      }
-      const id = queue.shift(),
-        d = Math.min(quantum, remaining[id]);
-      ev.push({ processId: id, start: t, end: t + d });
-      t += d;
-      remaining[id] -= d;
-      add();
-      if (remaining[id] > 0) queue.push(id);
-      else done.add(id);
-    }
-    return result(processes, ev);
-  }
-  if (algo === "mlfq") {
-    let queues = Array.from({ length: levels }, () => []),
-      level = {};
-    ps.forEach((p) => (level[p.id] = 0));
-    next = 0;
-    while (done.size < ps.length) {
-      while (next < ps.length && ps[next].arrival <= t) {
-        queues[0].push(ps[next].id);
-        next++;
-      }
-      let q = queues.findIndex((x) => x.length);
-      if (q < 0) {
-        const n = ps[next];
-        ev.push({ processId: "IDLE", start: t, end: n.arrival });
-        t = n.arrival;
-        continue;
-      }
-      const id = queues[q].shift(),
-        d = Math.min(
-          q === levels - 1 ? 999 : quantum * Math.pow(2, q),
-          remaining[id],
-        );
-      ev.push({ processId: id, start: t, end: t + d, queueLevel: q });
-      t += d;
-      remaining[id] -= d;
-      while (next < ps.length && ps[next].arrival <= t) {
-        queues[0].push(ps[next].id);
-        next++;
-      }
-      if (remaining[id]) queues[Math.min(q + 1, levels - 1)].push(id);
-      else done.add(id);
-    }
-    return result(processes, ev);
-  }
-  while (done.size < ps.length) {
-    let choices = ps.filter((p) => !done.has(p.id) && p.arrival <= t);
-    if (!choices.length) {
-      const n = ps.find((p) => !done.has(p.id));
-      ev.push({ processId: "IDLE", start: t, end: n.arrival });
-      t = n.arrival;
-      continue;
-    }
-    const p = choices.sort((a, b) => {
-      const x = remaining[a.id] - remaining[b.id];
-      return algo === "lrtf" ? -x : x || a.arrival - b.arrival;
-    })[0];
-    ev.push({ processId: p.id, start: t, end: t + 1 });
-    remaining[p.id]--;
-    t++;
-    if (!remaining[p.id]) done.add(p.id);
-  }
-  return result(processes, ev);
-}
 function App() {
   const [processes, setProcesses] = useState(PRESET),
     [algo, setAlgo] = useState("srtf"),
@@ -228,7 +61,13 @@ function App() {
     [playing, setPlaying] = useState(false),
     [view, setView] = useState("visualize");
   const sim = useMemo(
-    () => simulate(processes, algo, quantum, mlfqLevels),
+    () => {
+      try { return { ...simulate(processes, algo, quantum, mlfqLevels), error: "" }; }
+      catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        return { ...simulate([], algo, quantum, mlfqLevels), error: error.message };
+      }
+    },
     [processes, algo, quantum, mlfqLevels],
   );
   const visible = sim.timeline.slice(0, active || sim.timeline.length);
@@ -258,16 +97,17 @@ function App() {
               [key]:
                 key === "id"
                   ? val
-                  : Math.max(0, Number(String(val).replace(/^0+(?=\d)/, "")) || 0),
+                  : Math.max(key === "burst" ? 1 : 0, Math.floor(Number(String(val).replace(/^0+(?=\d)/, ""))) || 0),
             }
           : p,
       ),
     );
   const add = () =>
-    setProcesses((a) => [
-      ...a,
-      { id: `P${a.length + 1}`, arrival: 0, burst: 3, ioBurst: 0, priority: 1 },
-    ]);
+    setProcesses((a) => {
+      let number = 1;
+      while (a.some((p) => p.id === `P${number}`)) number++;
+      return [...a, { id: `P${number}`, arrival: 0, burst: 3 }];
+    });
   const reset = () => {
     setActive(0);
     setPlaying(false);
@@ -333,8 +173,9 @@ function App() {
             <RotateCcw size={15} /> Reset example
           </button>
         </div>
+        {sim.error && <p role="alert" className="hint">{sim.error}</p>}
         {view === "compare" ? (
-          <Compare processes={processes} quantum={quantum} />
+          !sim.error && <Compare processes={processes} quantum={quantum} />
         ) : (
           <>
             <section className="workspace">
@@ -355,8 +196,6 @@ function App() {
                         <th>PID</th>
                         <th>ARRIVAL</th>
                         <th>CPU BURST</th>
-                        <th>I/O BURST</th>
-                        <th>PRIORITY</th>
                         <th />
                       </tr>
                     </thead>
@@ -390,26 +229,6 @@ function App() {
                             />
                           </td>
                           <td>
-                            <input
-                              type="number"
-                              value={p.ioBurst || 0}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) =>
-                                update(i, "ioBurst", e.target.value)
-                              }
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="number"
-                              value={p.priority}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) =>
-                                update(i, "priority", e.target.value)
-                              }
-                            />
-                          </td>
-                          <td>
                             <button
                               className="delete"
                               onClick={() =>
@@ -433,8 +252,8 @@ function App() {
                 <div className="hint">
                   <Info size={15} />
                   <span>
-                    I/O burst is tracked in the metrics table; the CPU schedule
-                    uses CPU burst time.
+                    This model schedules one CPU burst per process. MLFQ uses
+                    round robin in upper queues and preemptible FCFS at the bottom.
                   </span>
                 </div>
               </aside>
@@ -464,7 +283,7 @@ function App() {
                         min="1"
                         value={quantum}
                         onChange={(e) =>
-                          setQuantum(Math.max(1, Number(e.target.value)))
+                          setQuantum(Math.max(1, Math.floor(Number(e.target.value)) || 1))
                         }
                       />
                     </label>
@@ -479,7 +298,7 @@ function App() {
                         value={mlfqLevels}
                         onChange={(e) =>
                           setMlfqLevels(
-                            Math.min(10, Math.max(1, Number(e.target.value))),
+                            Math.min(10, Math.max(1, Math.floor(Number(e.target.value)) || 1)),
                           )
                         }
                       />
@@ -659,19 +478,16 @@ function Metrics({ processes, sim }) {
               <th>PROCESS</th>
               <th>BURST TIME</th>
               <th>ARRIVAL TIME</th>
-              <th>I/O BURST TIME</th>
               <th>START TIME</th>
               <th>COMPLETION TIME</th>
               <th>RESPONSE TIME</th>
               <th>TURNAROUND TIME</th>
-              <th>TOTAL BURST TIME</th>
               <th>WAITING TIME</th>
             </tr>
           </thead>
           <tbody>
             {processes.map((p) => {
               const first = sim.timeline.find((e) => e.processId === p.id);
-              const io = p.ioBurst || 0;
               return (
                 <tr key={p.id}>
                   <td>
@@ -683,12 +499,10 @@ function Metrics({ processes, sim }) {
                   </td>
                   <td>{p.burst}</td>
                   <td>{p.arrival}</td>
-                  <td>{io}</td>
                   <td>{first?.start ?? 0}</td>
                   <td>{sim.completion[p.id] || 0}</td>
                   <td>{sim.response[p.id] || 0}</td>
                   <td>{sim.turnaround[p.id] || 0}</td>
-                  <td>{p.burst + io}</td>
                   <td className={(sim.waiting[p.id] || 0) > 4 ? "warn" : ""}>
                     {sim.waiting[p.id] || 0}
                   </td>
